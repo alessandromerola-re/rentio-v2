@@ -19,5 +19,18 @@
       - "${MQTT_PORT}:1883"
     restart: unless-stopped
 
+  edge-agent:
+    build:
+      context: ../../../rentio-edge/agent
+    container_name: rentio-edge-agent
+    environment:
+      MQTT_URL: mqtt://mqtt:1883
+      RENTIO_TENANT: windome
+      RENTIO_BUILDING: casagiove-01
+      RENTIO_GATEWAY: gw-0001
+    depends_on:
+      - mqtt
+    restart: unless-stopped
+
 volumes:
   rentio_pgdata:
