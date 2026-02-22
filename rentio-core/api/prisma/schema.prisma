@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  operator
+  owner
+  guest
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  role         Role
+  tenantId     String?  @map("tenant_id")
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id])
+  audits       AuditLog[]
+}
+
+model Tenant {
+  id         String      @id @default(cuid())
+  slug       String      @unique
+  name       String
+  users      User[]
+  buildings  Building[]
+  gateways   Gateway[]
+  events     Event[]
+  states     DeviceState[]
+  tokens     ProvisioningToken[]
+}
+
+model Building {
+  id         String      @id @default(cuid())
+  tenantId   String      @map("tenant_id")
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  slug       String
+  name       String
+  gateways   Gateway[]
+  events     Event[]
+  states     DeviceState[]
+  tokens     ProvisioningToken[]
+
+  @@unique([tenantId, slug])
+}
+
+model Gateway {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  buildingId String   @map("building_id")
+  gatewayId  String   @map("gateway_id")
+  name       String
+  status     String   @default("offline")
+  lastSeenAt DateTime? @map("last_seen_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  building   Building @relation(fields: [buildingId], references: [id])
+  events     Event[]
+  states     DeviceState[]
+
+  @@unique([tenantId, buildingId, gatewayId])
+}
+
+model Event {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  buildingId String   @map("building_id")
+  gatewayDbId String  @map("gateway_db_id")
+  eventId    String   @map("event_id")
+  type       String
+  channel    String
+  topic      String
+  ts         DateTime
+  payload    Json
+  createdAt  DateTime @default(now()) @map("created_at")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  building   Building @relation(fields: [buildingId], references: [id])
+  gateway    Gateway  @relation(fields: [gatewayDbId], references: [id])
+
+  @@unique([gatewayDbId, eventId])
+  @@index([tenantId, buildingId, channel])
+}
+
+model DeviceState {
+  id         String   @id @default(cuid())
+  tenantId   String   @map("tenant_id")
+  buildingId String   @map("building_id")
+  gatewayDbId String  @map("gateway_db_id")
+  key        String
+  ts         DateTime
+  value      Json
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  building   Building @relation(fields: [buildingId], references: [id])
+  gateway    Gateway  @relation(fields: [gatewayDbId], references: [id])
+
+  @@unique([gatewayDbId, key])
+}
+
+model ProvisioningToken {
+  id         String    @id @default(cuid())
+  tenantId   String    @map("tenant_id")
+  buildingId String    @map("building_id")
+  tokenHash  String    @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  usedAt     DateTime? @map("used_at")
+  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  building   Building  @relation(fields: [buildingId], references: [id])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actorUserId String?  @map("actor_user_id")
+  actorUser   User?    @relation(fields: [actorUserId], references: [id])
+  action      String
+  meta        Json
+  createdAt   DateTime @default(now()) @map("created_at")
+}
