@@ -1,36 +1,124 @@
-﻿services:
+services:
   postgres:
-    image: postgres:16
+    image: postgres:18.2
     container_name: rentio-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
+      PGDATA: /var/lib/postgresql/data/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - rentio_pgdata:/var/lib/postgresql/data
+    networks:
+      - internal
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
     restart: unless-stopped
 
   mqtt:
-    image: eclipse-mosquitto:2
+    image: eclipse-mosquitto:2.0.18
     container_name: rentio-mqtt
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 -W 3 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ../../mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - rentio_mqtt_data:/mosquitto/data
+      - rentio_mqtt_log:/mosquitto/log
+    networks:
+      - internal
     ports:
-      - "${MQTT_PORT}:1883"
+      - "${MQTT_PORT:-1883}:1883"
+    restart: unless-stopped
+
+  core-api:
+    build:
+      context: ../../../rentio-core/api
+    container_name: rentio-core-api
+    env_file:
+      - ../../../.env
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      MQTT_URL: mqtt://mqtt:1883
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+      - public
+    ports:
+      - "${CORE_API_PORT:-3001}:3001"
+    restart: unless-stopped
+
+  core-ui:
+    build:
+      context: ../../../rentio-core/ui
+    container_name: rentio-core-ui
+    environment:
+      PORT: 3000
+      CORE_API_URL: ${CORE_API_URL:-http://core-api:3001}
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks:
+      - public
+    ports:
+      - "${CORE_UI_PORT:-3000}:3000"
     restart: unless-stopped
 
   edge-agent:
     build:
       context: ../../../rentio-edge/agent
     container_name: rentio-edge-agent
+    env_file:
+      - ../../../.env
     environment:
       MQTT_URL: mqtt://mqtt:1883
-      RENTIO_TENANT: windome
-      RENTIO_BUILDING: casagiove-01
-      RENTIO_GATEWAY: gw-0001
     depends_on:
-      - mqtt
+      mqtt:
+        condition: service_healthy
+    volumes:
+      - rentio_edge_data:/data
+    networks:
+      - internal
     restart: unless-stopped
+
+  adminer:
+    image: adminer:5
+    profiles: ["tools"]
+    ports:
+      - "8080:8080"
+    networks:
+      - public
+      - internal
 
 volumes:
   rentio_pgdata:
+  rentio_mqtt_data:
+  rentio_mqtt_log:
+  rentio_edge_data:
+
+networks:
+  internal:
+  public:
