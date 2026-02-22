@@ -67,3 +67,8 @@ mosquitto_pub -h localhost -p 18883 -q 1 -r \
 Repository settings required:
 1. Enable **Allow auto-merge**.
 2. Protect `main` with at least one required status check (`ci`).
+
+
+### Troubleshooting (Windows)
+
+If PowerShell says `npm` is not recognized, Node.js is not installed (or not on PATH). Install Node.js 24 LTS from the official installer and reopen the terminal before running Docker Compose.
