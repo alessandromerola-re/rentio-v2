@@ -22,6 +22,7 @@ model User {
   tenantId     String?  @map("tenant_id")
   tenant       Tenant?  @relation(fields: [tenantId], references: [id])
   audits       AuditLog[]
+  createdAt    DateTime @default(now()) @map("created_at")
 }
 
 model Tenant {
@@ -34,6 +35,7 @@ model Tenant {
   events     Event[]
   states     DeviceState[]
   tokens     ProvisioningToken[]
+  createdAt  DateTime @default(now()) @map("created_at")
 }
 
 model Building {
@@ -46,6 +48,7 @@ model Building {
   events     Event[]
   states     DeviceState[]
   tokens     ProvisioningToken[]
+  createdAt  DateTime @default(now()) @map("created_at")
 
   @@unique([tenantId, slug])
 }

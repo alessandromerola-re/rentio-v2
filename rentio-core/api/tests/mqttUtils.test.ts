@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Prisma } from '@prisma/client';
-import { parseSysStatusPayload, parseTopic, safeCreateEvent, validateEnvelope } from '../src/mqttUtils.js';
+import { getGatewayStatusFromEnvelope, parseTopic, safeCreateEvent, validateEnvelope } from '../src/mqttUtils.js';
 
 describe('parseTopic', () => {
   it('parses valid topics', () => {
@@ -16,17 +16,15 @@ describe('parseTopic', () => {
 
 describe('validateEnvelope', () => {
   it('validates required fields', () => {
-    expect(() =>
-      validateEnvelope({ v: '1', id: 'a', ts: '2024-01-01T00:00:00Z', tenant: 't', building: 'b', gateway: 'g', data: {} })
-    ).not.toThrow();
+    const env = validateEnvelope({ v: '1', id: 'a', ts: '2024-01-01T00:00:00Z', tenant: 't', building: 'b', gateway: 'g', data: {} });
+    expect(env.id).toBe('a');
     expect(() => validateEnvelope({ id: 'a' })).toThrow(/v/);
   });
 });
 
-describe('parseSysStatusPayload', () => {
-  it('accepts online/offline values', () => {
-    expect(parseSysStatusPayload('online')).toBe('online');
-    expect(parseSysStatusPayload('"offline"')).toBe('offline');
+describe('getGatewayStatusFromEnvelope', () => {
+  it('reads online/offline status from data', () => {
+    expect(getGatewayStatusFromEnvelope(validateEnvelope({ v: '1', id: 'a', ts: '2024-01-01T00:00:00Z', tenant: 't', building: 'b', gateway: 'g', data: { status: 'online' } }))).toBe('online');
   });
 });
 

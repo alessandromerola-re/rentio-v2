@@ -1,6 +1,6 @@
 CREATE TYPE "Role" AS ENUM ('admin', 'operator', 'owner', 'guest');
-CREATE TABLE "Tenant" ("id" TEXT PRIMARY KEY, "slug" TEXT UNIQUE NOT NULL, "name" TEXT NOT NULL);
-CREATE TABLE "Building" ("id" TEXT PRIMARY KEY, "tenant_id" TEXT NOT NULL REFERENCES "Tenant"("id"), "slug" TEXT NOT NULL, "name" TEXT NOT NULL, UNIQUE("tenant_id","slug"));
+CREATE TABLE "Tenant" ("id" TEXT PRIMARY KEY, "slug" TEXT UNIQUE NOT NULL, "name" TEXT NOT NULL, "created_at" TIMESTAMP NOT NULL DEFAULT NOW());
+CREATE TABLE "Building" ("id" TEXT PRIMARY KEY, "tenant_id" TEXT NOT NULL REFERENCES "Tenant"("id"), "slug" TEXT NOT NULL, "name" TEXT NOT NULL, "created_at" TIMESTAMP NOT NULL DEFAULT NOW(), UNIQUE("tenant_id","slug"));
 CREATE TABLE "Gateway" (
   "id" TEXT PRIMARY KEY,
   "tenant_id" TEXT NOT NULL REFERENCES "Tenant"("id"),
@@ -17,7 +17,8 @@ CREATE TABLE "User" (
   "email" TEXT UNIQUE NOT NULL,
   "password_hash" TEXT NOT NULL,
   "role" "Role" NOT NULL,
-  "tenant_id" TEXT REFERENCES "Tenant"("id")
+  "tenant_id" TEXT REFERENCES "Tenant"("id"),
+  "created_at" TIMESTAMP NOT NULL DEFAULT NOW()
 );
 CREATE TABLE "Event" (
   "id" TEXT PRIMARY KEY,

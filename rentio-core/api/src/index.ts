@@ -73,7 +73,7 @@ app.post('/tenants/:tenantId/buildings/:buildingId/provisioning-token', { preHan
   return { token, expiresAt };
 });
 
-app.get('/gateways', { preHandler: requireRole(['admin', 'operator', 'owner', 'guest']) }, async (req) => {
+app.get('/gateways', { preHandler: requireRole(['admin', 'operator']) }, async (req) => {
   const q = req.query as { tenant?: string; building?: string; gateway?: string; status?: string };
   return prisma.gateway.findMany({
     where: {
@@ -87,7 +87,7 @@ app.get('/gateways', { preHandler: requireRole(['admin', 'operator', 'owner', 'g
   });
 });
 
-app.get('/events', { preHandler: requireRole(['admin', 'operator', 'owner', 'guest']) }, async (req) => {
+app.get('/events', { preHandler: requireRole(['admin', 'operator']) }, async (req) => {
   const q = req.query as {
     tenant?: string;
     building?: string;
@@ -116,7 +116,7 @@ app.get('/events', { preHandler: requireRole(['admin', 'operator', 'owner', 'gue
   });
 });
 
-app.get('/device-states', { preHandler: requireRole(['admin', 'operator', 'owner', 'guest']) }, async (req) => {
+app.get('/device-states', { preHandler: requireRole(['admin', 'operator']) }, async (req) => {
   const q = req.query as { tenant?: string; building?: string; gateway?: string; key?: string };
   return prisma.deviceState.findMany({
     where: {

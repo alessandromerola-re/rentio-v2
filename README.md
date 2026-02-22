@@ -1,8 +1,6 @@
 # Rentio v2 MVP
 
-Rentio v2 is a **multi-tenant, security-first, offline-first** platform with:
-- **Core** control plane (`rentio-core/api`, `rentio-core/ui`)
-- **Edge** data plane (`rentio-edge/agent`)
+Core (control-plane) + Edge (data-plane) multi-tenant, offline-first, security-first.
 
 ## Quickstart
 
@@ -12,43 +10,49 @@ cd infra/compose/dev
 docker compose up --build
 ```
 
-## Services
+## URLs (host)
+- UI: http://localhost:18080
+- API: http://localhost:18081
 
-- UI: http://localhost:3000
-- API: http://localhost:3001
-- Postgres: localhost:5432
-- MQTT broker: localhost:1883
-
-## Default login
-
+## Default credentials
 - email: `admin@rentio.local`
 - password: `admin12345`
 
-(Override with `ADMIN_EMAIL` and `ADMIN_PASSWORD` in `.env`.)
-
-## MQTT contract v1
-
+## MQTT Contract v1
 Base topic:
-
 `rentio/v1/{tenant}/{building}/gw/{gateway}/...`
 
-Channels used:
-- `cmd` Core -> Gateway
-- `ack`, `evt`, `state`, `tele`, `sys` Gateway -> Core
+Channels:
+- cmd (Core -> Gateway)
+- ack/evt/state/tele/sys (Gateway -> Core)
 
-The edge agent sends retained `sys/status=online` on connect and LWT retained `offline` on abrupt disconnect. `sys/status` is intentionally a plain string payload (`online`/`offline`), while other channels use JSON envelope.
+Envelope fields (standardized): `v,id,ts,src,tenant,building,gateway,data,corr?`
 
-## Publish an example event manually
+## Example publish commands
 
+### evt
 ```bash
-mosquitto_pub -h localhost -p 1883 \
+mosquitto_pub -h localhost -p 18883 -q 1 \
   -t 'rentio/v1/windome/casagiove-01/gw/gw-0001/evt/access/opened' \
-  -q 1 \
   -m '{"v":"1","id":"evt-1","ts":"2026-01-01T00:00:00.000Z","src":"edge-agent","tenant":"windome","building":"casagiove-01","gateway":"gw-0001","data":{"door":"A1"}}'
 ```
 
-## Notes
+### state (retained)
+```bash
+mosquitto_pub -h localhost -p 18883 -q 1 -r \
+  -t 'rentio/v1/windome/casagiove-01/gw/gw-0001/state/device/relay-luce-1' \
+  -m '{"v":"1","id":"state-1","ts":"2026-01-01T00:00:00.000Z","src":"edge-agent","tenant":"windome","building":"casagiove-01","gateway":"gw-0001","data":{"on":true}}'
+```
 
-- Edge store-and-forward queue persists at `/data/outbox.jsonl` inside `edge-agent` volume.
-- Provisioning token endpoint returns plaintext token once; Core stores only SHA-256 hash.
-- Dev mode allows auto-registration of unknown gateways (TODO in code: disable for production).
+### sys/status (retained + LWT style payload)
+```bash
+mosquitto_pub -h localhost -p 18883 -q 1 -r \
+  -t 'rentio/v1/windome/casagiove-01/gw/gw-0001/sys/status' \
+  -m '{"v":"1","id":"sys-1","ts":"2026-01-01T00:00:00.000Z","src":"edge-agent","tenant":"windome","building":"casagiove-01","gateway":"gw-0001","data":{"status":"online"}}'
+```
+
+## Notes / next phase
+- Add reverse-proxy + TLS in front of API/UI.
+- Harden auth (refresh token, password policies, MFA).
+- Disable implicit gateway auto-register in production.
+- Replace dev anonymous MQTT with ACL/auth.

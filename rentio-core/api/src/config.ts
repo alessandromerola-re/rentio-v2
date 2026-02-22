@@ -1,5 +1,5 @@
 export const config = {
-  port: Number(process.env.PORT || 3001),
+  port: Number(process.env.PORT || 8080),
   jwtSecret: process.env.JWT_SECRET || 'dev-secret',
   adminEmail: process.env.ADMIN_EMAIL || 'admin@rentio.local',
   adminPassword: process.env.ADMIN_PASSWORD || 'admin12345',
