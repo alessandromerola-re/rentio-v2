@@ -89,7 +89,9 @@ client.on('connect', () => {
 });
 
 client.on('message', (topic, buff) => {
-  const route = topic.replace(`${base}/cmd/`, '');
+  const prefix = `${base}/cmd/`;
+  if (!topic.startsWith(prefix)) return;
+  const route = topic.slice(prefix.length);
   let incoming = {};
   try { incoming = JSON.parse(buff.toString('utf8')); } catch {}
   const ack = makeEnvelope({ route, result: 'accepted' }, { corr: incoming.id || null });

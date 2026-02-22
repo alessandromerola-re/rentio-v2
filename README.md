@@ -36,7 +36,7 @@ Channels used:
 - `cmd` Core -> Gateway
 - `ack`, `evt`, `state`, `tele`, `sys` Gateway -> Core
 
-The edge agent sends retained `sys/status=online` on connect and LWT retained `offline` on abrupt disconnect.
+The edge agent sends retained `sys/status=online` on connect and LWT retained `offline` on abrupt disconnect. `sys/status` is intentionally a plain string payload (`online`/`offline`), while other channels use JSON envelope.
 
 ## Publish an example event manually
 

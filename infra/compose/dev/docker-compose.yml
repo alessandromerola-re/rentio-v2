@@ -69,10 +69,11 @@ services:
   core-ui:
     build:
       context: ../../../rentio-core/ui
+      args:
+        VITE_CORE_API_URL: ${CORE_API_URL:-http://localhost:3001}
     container_name: rentio-core-ui
     environment:
       PORT: 3000
-      CORE_API_URL: ${CORE_API_URL:-http://core-api:3001}
     depends_on:
       core-api:
         condition: service_healthy
