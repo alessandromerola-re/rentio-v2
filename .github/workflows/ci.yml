@@ -1,13 +1,13 @@
-name: CI
+name: ci
 
 on:
-  push:
   pull_request:
 
 jobs:
-  test-build:
+  ci:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         app: [rentio-core/api, rentio-core/ui, rentio-edge/agent]
     steps:
@@ -15,7 +15,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install deps
+          cache: npm
+          cache-dependency-path: |
+            rentio-core/api/package-lock.json
+            rentio-core/ui/package-lock.json
+            rentio-edge/agent/package-lock.json
+      - name: Install dependencies
         working-directory: ${{ matrix.app }}
         run: npm install
       - name: Lint

@@ -56,3 +56,14 @@ mosquitto_pub -h localhost -p 18883 -q 1 -r \
 - Harden auth (refresh token, password policies, MFA).
 - Disable implicit gateway auto-register in production.
 - Replace dev anonymous MQTT with ACL/auth.
+
+## PR + Auto-merge workflow
+
+- Create feature branches (`codex/<short-feature-name>`) and open PRs to `main`.
+- Apply label `automerge` on the PR.
+- CI workflow (`ci`) runs on `pull_request`.
+- Auto-merge workflow enables `gh pr merge --auto --squash --delete-branch` when PR is labeled and ready.
+
+Repository settings required:
+1. Enable **Allow auto-merge**.
+2. Protect `main` with at least one required status check (`ci`).
