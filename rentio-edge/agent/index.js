@@ -1,103 +1,175 @@
-﻿const mqtt = require("mqtt");
-const crypto = require("crypto");
+'use strict';
 
-const MQTT_URL = process.env.MQTT_URL || "mqtt://localhost:1883";
-const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
+const mqtt = require('mqtt');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
 
-const TENANT = process.env.RENTIO_TENANT || "windome";
-const BUILDING = process.env.RENTIO_BUILDING || "casagiove-01";
-const GATEWAY = process.env.RENTIO_GATEWAY || "gw-0001";
+const cfg = {
+  mqttUrl: process.env.MQTT_URL || 'mqtt://localhost:1883',
+  username: process.env.MQTT_USERNAME || undefined,
+  password: process.env.MQTT_PASSWORD || undefined,
+  tenant: process.env.EDGE_RENTIO_TENANT || 'windome',
+  building: process.env.EDGE_RENTIO_BUILDING || 'casagiove-01',
+  gateway: process.env.EDGE_RENTIO_GATEWAY || 'gw-0001',
+  heartbeatSeconds: Number(process.env.HEARTBEAT_SECONDS || 20),
+  queueFile: process.env.EDGE_QUEUE_FILE || '/data/queue.jsonl',
+  maxQueue: Number(process.env.EDGE_MAX_QUEUE || 1000),
+  provisioningToken: process.env.PROVISIONING_TOKEN || ''
+};
 
-const base = `rentio/v1/${TENANT}/${BUILDING}/gw/${GATEWAY}`;
-const sysStatusTopic = `${base}/sys/status`;
+const base = 'rentio/v1/' + cfg.tenant + '/' + cfg.building + '/gw/' + cfg.gateway;
+const outbox = [];
+const seenCmd = new Set();
+let flushHandle = null;
 
-function nowIso() {
-  return new Date().toISOString();
+function mkEnvelope(data, extra) {
+  const env = {
+    v: '1',
+    id: crypto.randomUUID(),
+    ts: new Date().toISOString(),
+    src: 'edge-agent',
+    tenant: cfg.tenant,
+    building: cfg.building,
+    gateway: cfg.gateway,
+    data: data || {}
+  };
+
+  if (extra && typeof extra === 'object') {
+    for (const key of Object.keys(extra)) env[key] = extra[key];
+  }
+
+  return env;
 }
 
-function envelope(src, data = {}, extra = {}) {
+function loadOutbox() {
+  try {
+    const txt = fs.readFileSync(cfg.queueFile, 'utf8');
+    const lines = txt.split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      outbox.push(JSON.parse(line));
+    }
+  } catch (err) {
+    // queue file may not exist on first run
+  }
+}
+
+function saveOutbox() {
+  fs.mkdirSync(path.dirname(cfg.queueFile), { recursive: true });
+  const txt = outbox.map((x) => JSON.stringify(x)).join('\n');
+  fs.writeFileSync(cfg.queueFile, txt);
+}
+
+function enqueue(msg) {
+  outbox.push(msg);
+  while (outbox.length > cfg.maxQueue) outbox.shift();
+  saveOutbox();
+}
+
+function mkQueued(topic, payloadObj, options) {
   return {
-    v: 1,
-    id: crypto.randomUUID(),
-    ts: nowIso(),
-    src,
-    tenant: TENANT,
-    building: BUILDING,
-    gateway: GATEWAY,
-    ...extra,
-    data
+    topic: topic,
+    payload: JSON.stringify(payloadObj),
+    options: options || { qos: 1, retain: false }
   };
 }
 
-const client = mqtt.connect(MQTT_URL, {
-  username: MQTT_USERNAME || undefined,
-  password: MQTT_PASSWORD || undefined,
-  clean: true,
-  keepalive: 30,
+function publishOrQueue(client, msg) {
+  if (!client.connected) {
+    enqueue(msg);
+    return;
+  }
+
+  client.publish(msg.topic, msg.payload, msg.options, function onPublished(err) {
+    if (err) enqueue(msg);
+  });
+}
+
+function startFlush(client) {
+  if (flushHandle) return;
+
+  flushHandle = setInterval(function flush() {
+    if (!client.connected || outbox.length === 0) return;
+
+    const msg = outbox[0];
+    client.publish(msg.topic, msg.payload, msg.options, function onFlush(err) {
+      if (err) return;
+      outbox.shift();
+      saveOutbox();
+    });
+  }, 1000);
+}
+
+loadOutbox();
+
+const willPayload = JSON.stringify(mkEnvelope({ status: 'offline' }));
+const client = mqtt.connect(cfg.mqttUrl, {
+  username: cfg.username,
+  password: cfg.password,
   reconnectPeriod: 2000,
+  keepalive: 30,
   will: {
-    topic: sysStatusTopic,
-    payload: "offline",
+    topic: base + '/sys/status',
+    payload: willPayload,
     qos: 1,
     retain: true
   }
 });
 
-client.on("connect", () => {
-  console.log(`[edge-agent] connected to ${MQTT_URL}`);
+client.on('connect', function onConnect() {
+  publishOrQueue(client, mkQueued(base + '/sys/status', mkEnvelope({ status: 'online' }), { qos: 1, retain: true }));
 
-  // presence online (retained)
-  client.publish(sysStatusTopic, "online", { qos: 1, retain: true });
-
-  // boot event
-  const boot = envelope(`gw:${GATEWAY}`, { version: "0.1.0" });
-  client.publish(`${base}/evt/system/boot`, JSON.stringify(boot), { qos: 1 });
-
-  // subscribe commands
-  client.subscribe(`${base}/cmd/#`, { qos: 1 }, (err) => {
-    if (err) console.error("[edge-agent] subscribe error", err);
-    else console.log(`[edge-agent] subscribed: ${base}/cmd/#`);
-  });
-});
-
-client.on("message", (topic, payloadBuf) => {
-  const payloadStr = payloadBuf.toString("utf8");
-  console.log(`[edge-agent] cmd topic=${topic} payload=${payloadStr}`);
-
-  const cmdPrefix = `${base}/cmd/`;
-  if (!topic.startsWith(cmdPrefix)) return;
-
-  const route = topic.substring(cmdPrefix.length); // es: access/open
-  let msg;
-  try {
-    msg = JSON.parse(payloadStr);
-  } catch {
-    msg = null;
+  if (cfg.provisioningToken) {
+    publishOrQueue(
+      client,
+      mkQueued(base + '/evt/system/hello', mkEnvelope({ token: cfg.provisioningToken, version: '0.2.0' }), { qos: 1, retain: false })
+    );
   }
 
-  // helper per ack
-  const ackTopic = `${base}/ack/${route}`;
-  const corr = msg?.id || null;
+  client.subscribe(base + '/cmd/#', { qos: 1 });
+  startFlush(client);
+});
 
-  // access/open demo
-  if (route === "access/open") {
-    const device = msg?.data?.device || "unknown-device";
-    const unit = msg?.data?.unit || "unknown-unit";
+client.on('message', function onMessage(topic, payloadBuf) {
+  const prefix = base + '/cmd/';
+  if (!topic.startsWith(prefix)) return;
 
-    const ack = envelope(`gw:${GATEWAY}`, { device, unit }, { corr, status: "ok" });
-    client.publish(ackTopic, JSON.stringify(ack), { qos: 1 });
+  const route = topic.slice(prefix.length);
+  let cmd = null;
+  try {
+    cmd = JSON.parse(payloadBuf.toString('utf8'));
+  } catch (err) {
+    cmd = null;
+  }
 
-    const evt = envelope(`gw:${GATEWAY}`, { device, unit, by: msg?.data?.requested_by || "unknown" });
-    client.publish(`${base}/evt/access/opened`, JSON.stringify(evt), { qos: 1 });
+  const cmdId = cmd && cmd.id ? cmd.id : null;
+  const ackTopic = base + '/ack/' + route;
+  const evtTopic = base + '/evt/' + route;
 
+  if (cmdId && seenCmd.has(cmdId)) {
+    publishOrQueue(client, mkQueued(ackTopic, mkEnvelope({ status: 'duplicate' }, { corr: cmdId }), { qos: 1, retain: false }));
     return;
   }
 
-  // default: unknown command
-  const errAck = envelope(`gw:${GATEWAY}`, { error: "Unknown command" }, { corr, status: "error", code: "NOT_IMPLEMENTED" });
-  client.publish(ackTopic, JSON.stringify(errAck), { qos: 1 });
+  if (cmdId) seenCmd.add(cmdId);
+
+  publishOrQueue(client, mkQueued(ackTopic, mkEnvelope({ status: 'ok' }, { corr: cmdId }), { qos: 1, retain: false }));
+  publishOrQueue(client, mkQueued(evtTopic, mkEnvelope({ executed: true, route: route }), { qos: 1, retain: false }));
 });
 
-client.on("reconnect", () => console.log("[edge-agent] reconnecting..."));
-client.on("error", (err) => console.error("[edge-agent] error", err));
+setInterval(function heartbeat() {
+  publishOrQueue(client, mkQueued(base + '/sys/status', mkEnvelope({ status: 'online', heartbeat: true }), { qos: 1, retain: true }));
+}, cfg.heartbeatSeconds * 1000);
+
+process.on('SIGTERM', function onSigterm() {
+  client.end(true, function onEnd() {
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', function onSigint() {
+  client.end(true, function onEnd() {
+    process.exit(0);
+  });
+});
