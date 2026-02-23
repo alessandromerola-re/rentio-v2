@@ -125,3 +125,12 @@ If values are still missing, confirm `../../../.env` exists and then recreate co
 docker compose down -v --remove-orphans
 docker compose up --build
 ```
+
+If `docker compose ps` shows `core-api` as `unhealthy` and `\dt` returns no tables, inspect bootstrap logs first:
+
+```powershell
+docker compose logs -f core-api
+```
+
+You should see migration + seed steps (`applying migrations`, `seeding data`) before server start.
+
