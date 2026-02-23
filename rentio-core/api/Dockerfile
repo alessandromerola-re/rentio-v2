@@ -5,6 +5,7 @@ RUN npm install
 
 FROM node:24-alpine AS build
 WORKDIR /app
+ENV DATABASE_URL="postgresql://rentio:rentio_change_me@localhost:5432/rentio?schema=public"
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 RUN npx prisma generate && npm run build
