@@ -88,6 +88,11 @@ docker compose exec mqtt mosquitto_pub -h localhost -q 1 -r \
   -m '{"v":"1","id":"sys-1","ts":"2026-01-01T00:00:00.000Z","src":"edge-agent","tenant":"windome","building":"casagiove-01","gateway":"gw-0001","data":{"status":"online"}}'
 ```
 
+## Service health endpoints
+
+- API health: `GET /health`
+- UI health: `GET /api/health` (used by Docker healthcheck, always returns `200` + `{ "ok": true }` when app is running)
+
 ## Notes / next phase
 - Add reverse-proxy + TLS in front of API/UI.
 - Harden auth (refresh token, password policies, MFA).
