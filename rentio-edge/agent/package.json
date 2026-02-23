@@ -1,12 +1,13 @@
-﻿{
+{
   "name": "rentio-edge-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "mqtt": "^5.10.0"
+    "mqtt": "^5.10.4"
   }
 }
