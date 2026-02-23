@@ -1,6 +1,7 @@
-﻿FROM node:20-alpine
+FROM node:24-alpine
 WORKDIR /app
-COPY package.json ./
-RUN npm install --omit=dev
-COPY index.js ./
-CMD ["npm","start"]
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY . .
+RUN node --check index.js
+CMD ["npm", "start"]
