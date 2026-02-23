@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import mqtt from 'mqtt';
 import crypto from 'node:crypto';
 import { prisma } from './prisma.js';
@@ -36,21 +37,21 @@ export function startMqttIngestion(mqttUrl: string) {
           channel: parsed.channel,
           topic,
           ts,
-          payload: envelope as unknown as object
+          payload: envelope as unknown as Prisma.InputJsonValue,
         });
       }
 
       if (parsed.channel === 'state') {
         await prisma.deviceState.upsert({
           where: { gatewayDbId_key: { gatewayDbId: gateway.id, key: parsed.subpath } },
-          update: { ts, value: envelope.data },
+          update: { ts, value: envelope.data as Prisma.InputJsonValue },
           create: {
             tenantId: gateway.tenantId,
             buildingId: gateway.buildingId,
             gatewayDbId: gateway.id,
             key: parsed.subpath,
             ts,
-            value: envelope.data
+            value: envelope.data as Prisma.InputJsonValue
           }
         });
         await safeCreateEvent({
@@ -62,7 +63,7 @@ export function startMqttIngestion(mqttUrl: string) {
           channel: parsed.channel,
           topic,
           ts,
-          payload: envelope as unknown as object
+          payload: envelope as unknown as Prisma.InputJsonValue,
         });
       }
 

@@ -16,7 +16,7 @@ type UserClaims = { sub: string; role: string; tenantId?: string | null };
 function requireRole(roles: string[]) {
   return async (request: any, reply: any) => {
     try {
-      await request.jwtVerify<UserClaims>();
+      await request.jwtVerify();
     } catch {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
