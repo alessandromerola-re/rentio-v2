@@ -124,6 +124,9 @@ client.on('message', (topic, payloadBuf) => {
     publishOrQueue(client, queueMessage(ackTopic, envelope({ status: 'duplicate' }, { corr: cmdId }), { qos: 1, retain: false }));
     return;
   }
+  client.subscribe(`${base}/cmd/#`, { qos: 1 });
+  flushQueue(client);
+});
 
   if (cmdId) processedCmdIds.add(cmdId);
   publishOrQueue(client, queueMessage(ackTopic, envelope({ status: 'ok' }, { corr: cmdId }), { qos: 1, retain: false }));
