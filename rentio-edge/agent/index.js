@@ -17,11 +17,11 @@ const cfg = {
 };
 
 const base = `rentio/v1/${cfg.tenant}/${cfg.building}/gw/${cfg.gateway}`;
-const queue = [];
-const processedCmdIds = new Set();
-let flushTimer = null;
+const outbox = [];
+const seenCmd = new Set();
+let flushInterval = null;
 
-function envelope(data = {}, extra = {}) {
+function mkEnvelope(data, extra) {
   return {
     v: '1',
     id: crypto.randomUUID(),
@@ -30,66 +30,69 @@ function envelope(data = {}, extra = {}) {
     tenant: cfg.tenant,
     building: cfg.building,
     gateway: cfg.gateway,
-    data,
-    ...extra
+    data: data || {},
+    ...(extra || {})
   };
 }
 
-function readQueue() {
+function loadOutbox() {
   try {
     const content = fs.readFileSync(cfg.queueFile, 'utf8');
-    for (const line of content.split('\n').filter(Boolean)) {
-      queue.push(JSON.parse(line));
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      outbox.push(JSON.parse(line));
     }
   } catch {
-    // ignore missing queue file on first boot
+    // first run, queue file can be absent
   }
 }
 
-function writeQueue() {
+function saveOutbox() {
   fs.mkdirSync(path.dirname(cfg.queueFile), { recursive: true });
-  fs.writeFileSync(cfg.queueFile, queue.map((x) => JSON.stringify(x)).join('\n'));
+  fs.writeFileSync(cfg.queueFile, outbox.map((m) => JSON.stringify(m)).join('\n'));
 }
 
-function enqueue(msg) {
-  queue.push(msg);
-  while (queue.length > cfg.maxQueue) queue.shift();
-  writeQueue();
+function pushOutbox(msg) {
+  outbox.push(msg);
+  while (outbox.length > cfg.maxQueue) outbox.shift();
+  saveOutbox();
 }
 
-function publishOrQueue(client, msg) {
+function queuePublish(topic, payloadObj, options) {
+  return {
+    topic,
+    payload: JSON.stringify(payloadObj),
+    options: options || { qos: 1, retain: false }
+  };
+}
+
+function publishOrBuffer(client, msg) {
   if (!client.connected) {
-    enqueue(msg);
+    pushOutbox(msg);
     return;
   }
 
   client.publish(msg.topic, msg.payload, msg.options, (err) => {
-    if (err) enqueue(msg);
+    if (err) pushOutbox(msg);
   });
 }
 
-function queueMessage(topic, payloadObj, options = { qos: 1, retain: false }) {
-  return { topic, payload: JSON.stringify(payloadObj), options };
-}
-
-function scheduleFlush(client) {
-  if (flushTimer) return;
-
-  flushTimer = setInterval(() => {
-    if (!client.connected || queue.length === 0) return;
-
-    const msg = queue[0];
+function startFlusher(client) {
+  if (flushInterval) return;
+  flushInterval = setInterval(() => {
+    if (!client.connected || outbox.length === 0) return;
+    const msg = outbox[0];
     client.publish(msg.topic, msg.payload, msg.options, (err) => {
       if (err) return;
-      queue.shift();
-      writeQueue();
+      outbox.shift();
+      saveOutbox();
     });
   }, 1000);
 }
 
-readQueue();
+loadOutbox();
 
-const willPayload = JSON.stringify(envelope({ status: 'offline' }));
+const willPayload = JSON.stringify(mkEnvelope({ status: 'offline' }));
 const client = mqtt.connect(cfg.mqttUrl, {
   username: cfg.username,
   password: cfg.password,
@@ -104,17 +107,15 @@ const client = mqtt.connect(cfg.mqttUrl, {
 });
 
 client.on('connect', () => {
-  publishOrQueue(client, queueMessage(`${base}/sys/status`, envelope({ status: 'online' }), { qos: 1, retain: true }));
+  publishOrBuffer(client, queuePublish(`${base}/sys/status`, mkEnvelope({ status: 'online' }), { qos: 1, retain: true }));
 
   if (cfg.provisioningToken) {
-    publishOrQueue(
-      client,
-      queueMessage(`${base}/evt/system/hello`, envelope({ token: cfg.provisioningToken, version: '0.2.0' }), { qos: 1, retain: false })
-    );
+    const hello = mkEnvelope({ token: cfg.provisioningToken, version: '0.2.0' });
+    publishOrBuffer(client, queuePublish(`${base}/evt/system/hello`, hello, { qos: 1, retain: false }));
   }
 
   client.subscribe(`${base}/cmd/#`, { qos: 1 });
-  scheduleFlush(client);
+  startFlusher(client);
 });
 
 client.on('message', (topic, payloadBuf) => {
@@ -129,26 +130,30 @@ client.on('message', (topic, payloadBuf) => {
     cmd = null;
   }
 
-  const cmdId = cmd?.id || null;
+  const cmdId = cmd && cmd.id ? cmd.id : null;
   const ackTopic = `${base}/ack/${route}`;
   const evtTopic = `${base}/evt/${route}`;
 
-  if (cmdId && processedCmdIds.has(cmdId)) {
-    publishOrQueue(client, queueMessage(ackTopic, envelope({ status: 'duplicate' }, { corr: cmdId }), { qos: 1, retain: false }));
+  if (cmdId && seenCmd.has(cmdId)) {
+    const duplicateAck = mkEnvelope({ status: 'duplicate' }, { corr: cmdId });
+    publishOrBuffer(client, queuePublish(ackTopic, duplicateAck, { qos: 1, retain: false }));
     return;
   }
   client.subscribe(`${base}/cmd/#`, { qos: 1 });
   flushQueue(client);
 });
 
-  if (cmdId) processedCmdIds.add(cmdId);
+  if (cmdId) seenCmd.add(cmdId);
 
-  publishOrQueue(client, queueMessage(ackTopic, envelope({ status: 'ok' }, { corr: cmdId }), { qos: 1, retain: false }));
-  publishOrQueue(client, queueMessage(evtTopic, envelope({ executed: true, route }), { qos: 1, retain: false }));
+  const ack = mkEnvelope({ status: 'ok' }, { corr: cmdId });
+  const evt = mkEnvelope({ executed: true, route });
+  publishOrBuffer(client, queuePublish(ackTopic, ack, { qos: 1, retain: false }));
+  publishOrBuffer(client, queuePublish(evtTopic, evt, { qos: 1, retain: false }));
 });
 
 setInterval(() => {
-  publishOrQueue(client, queueMessage(`${base}/sys/status`, envelope({ status: 'online', heartbeat: true }), { qos: 1, retain: true }));
+  const hb = mkEnvelope({ status: 'online', heartbeat: true });
+  publishOrBuffer(client, queuePublish(`${base}/sys/status`, hb, { qos: 1, retain: true }));
 }, cfg.heartbeatSeconds * 1000);
 
 process.on('SIGTERM', () => client.end(true, () => process.exit(0)));

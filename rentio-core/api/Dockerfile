@@ -18,4 +18,4 @@ COPY --from=build /app/prisma ./prisma
 COPY package.json ./
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --retries=5 CMD node -e "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run prisma:seed && node dist/src/index.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run prisma:seed && node dist/src/index.js || node dist/index.js"]
