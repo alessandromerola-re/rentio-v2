@@ -75,3 +75,6 @@ If PowerShell says `npm` is not recognized, Node.js is not installed (or not on 
 
 
 If a previous build failed, do not run plain `docker compose up` immediately because Compose may reuse stale images. Use `docker compose --progress plain build --no-cache` (or `docker compose up --build`) first.
+
+
+If you see `no configuration file provided: not found`, you are running Compose from the wrong directory. Run commands from `infra/compose/dev` where `docker-compose.yml` exists.

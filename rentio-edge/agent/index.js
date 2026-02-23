@@ -145,6 +145,8 @@ client.on('message', (topic, payloadBuf) => {
 
   if (cmdId) seenCmd.add(cmdId);
 
+  if (cmdId) seenCmd.add(cmdId);
+
   const ack = mkEnvelope({ status: 'ok' }, { corr: cmdId });
   const evt = mkEnvelope({ executed: true, route });
   publishOrBuffer(client, queuePublish(ackTopic, ack, { qos: 1, retain: false }));

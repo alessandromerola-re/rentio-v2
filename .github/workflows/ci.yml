@@ -15,11 +15,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: |
-            rentio-core/api/package-lock.json
-            rentio-core/ui/package-lock.json
-            rentio-edge/agent/package-lock.json
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
         run: npm install
