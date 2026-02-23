@@ -72,3 +72,6 @@ Repository settings required:
 ### Troubleshooting (Windows)
 
 If PowerShell says `npm` is not recognized, Node.js is not installed (or not on PATH). Install Node.js 24 LTS from the official installer and reopen the terminal before running Docker Compose.
+
+
+If a previous build failed, do not run plain `docker compose up` immediately because Compose may reuse stale images. Use `docker compose --progress plain build --no-cache` (or `docker compose up --build`) first.

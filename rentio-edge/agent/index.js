@@ -38,8 +38,12 @@ function envelope(data = {}, extra = {}) {
 function readQueue() {
   try {
     const content = fs.readFileSync(cfg.queueFile, 'utf8');
-    for (const line of content.split('\n').filter(Boolean)) queue.push(JSON.parse(line));
-  } catch {}
+    for (const line of content.split('\n').filter(Boolean)) {
+      queue.push(JSON.parse(line));
+    }
+  } catch {
+    // ignore missing queue file on first boot
+  }
 }
 
 function writeQueue() {
@@ -54,7 +58,11 @@ function enqueue(msg) {
 }
 
 function publishOrQueue(client, msg) {
-  if (!client.connected) return enqueue(msg);
+  if (!client.connected) {
+    enqueue(msg);
+    return;
+  }
+
   client.publish(msg.topic, msg.payload, msg.options, (err) => {
     if (err) enqueue(msg);
   });
@@ -66,20 +74,17 @@ function queueMessage(topic, payloadObj, options = { qos: 1, retain: false }) {
 
 function scheduleFlush(client) {
   if (flushTimer) return;
-  let delay = 1000;
+
   flushTimer = setInterval(() => {
     if (!client.connected || queue.length === 0) return;
+
     const msg = queue[0];
     client.publish(msg.topic, msg.payload, msg.options, (err) => {
-      if (err) {
-        delay = Math.min(delay * 2, 10000);
-        return;
-      }
-      delay = 1000;
+      if (err) return;
       queue.shift();
       writeQueue();
     });
-  }, delay);
+  }, 1000);
 }
 
 readQueue();
@@ -100,8 +105,12 @@ const client = mqtt.connect(cfg.mqttUrl, {
 
 client.on('connect', () => {
   publishOrQueue(client, queueMessage(`${base}/sys/status`, envelope({ status: 'online' }), { qos: 1, retain: true }));
+
   if (cfg.provisioningToken) {
-    publishOrQueue(client, queueMessage(`${base}/evt/system/hello`, envelope({ token: cfg.provisioningToken, version: '0.2.0' }), { qos: 1, retain: false }));
+    publishOrQueue(
+      client,
+      queueMessage(`${base}/evt/system/hello`, envelope({ token: cfg.provisioningToken, version: '0.2.0' }), { qos: 1, retain: false })
+    );
   }
 
   client.subscribe(`${base}/cmd/#`, { qos: 1 });
@@ -114,7 +123,11 @@ client.on('message', (topic, payloadBuf) => {
 
   const route = topic.slice(prefix.length);
   let cmd = null;
-  try { cmd = JSON.parse(payloadBuf.toString('utf8')); } catch {}
+  try {
+    cmd = JSON.parse(payloadBuf.toString('utf8'));
+  } catch {
+    cmd = null;
+  }
 
   const cmdId = cmd?.id || null;
   const ackTopic = `${base}/ack/${route}`;
@@ -129,6 +142,7 @@ client.on('message', (topic, payloadBuf) => {
 });
 
   if (cmdId) processedCmdIds.add(cmdId);
+
   publishOrQueue(client, queueMessage(ackTopic, envelope({ status: 'ok' }, { corr: cmdId }), { qos: 1, retain: false }));
   publishOrQueue(client, queueMessage(evtTopic, envelope({ executed: true, route }), { qos: 1, retain: false }));
 });
