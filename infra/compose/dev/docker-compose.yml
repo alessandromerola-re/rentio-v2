@@ -33,7 +33,7 @@ services:
   core-api:
     build:
       context: ../../../rentio-core/api
-    env_file: [../../../.env]
+    env_file: [.env]
     environment:
       PORT: ${CORE_API_PORT:-8080}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
@@ -76,7 +76,7 @@ services:
   edge-agent:
     build:
       context: ../../../rentio-edge/agent
-    env_file: [../../../.env]
+    env_file: [.env]
     depends_on:
       mqtt:
         condition: service_healthy
@@ -84,6 +84,12 @@ services:
       - rentio_edge_data:/data
     environment:
       MQTT_URL: ${MQTT_URL}
+      EDGE_RENTIO_TENANT: ${EDGE_RENTIO_TENANT}
+      EDGE_RENTIO_BUILDING: ${EDGE_RENTIO_BUILDING}
+      EDGE_RENTIO_GATEWAY: ${EDGE_RENTIO_GATEWAY}
+      RENTIO_TENANT: ${EDGE_RENTIO_TENANT}
+      RENTIO_BUILDING: ${EDGE_RENTIO_BUILDING}
+      RENTIO_GATEWAY: ${EDGE_RENTIO_GATEWAY}
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/edge-alive && [ $$(expr $$(date +%s) - $$(stat -c %Y /tmp/edge-alive)) -lt 90 ]"]
       interval: 30s
@@ -95,7 +101,9 @@ services:
   postgres-debug:
     image: alpine/socat:1.8.0.0
     command: ["-d", "-d", "TCP-LISTEN:15432,fork,reuseaddr", "TCP:postgres:5432"]
-    depends_on: [postgres]
+    depends_on:
+      postgres:
+        condition: service_healthy
     profiles: ["debug"]
     ports:
       - "15432:15432"
@@ -104,7 +112,9 @@ services:
   mqtt-debug:
     image: alpine/socat:1.8.0.0
     command: ["-d", "-d", "TCP-LISTEN:18883,fork,reuseaddr", "TCP:mqtt:1883"]
-    depends_on: [mqtt]
+    depends_on:
+      mqtt:
+        condition: service_healthy
     profiles: ["debug"]
     ports:
       - "18883:18883"
