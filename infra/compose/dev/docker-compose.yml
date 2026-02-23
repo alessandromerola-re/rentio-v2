@@ -1,36 +1,115 @@
-﻿services:
+services:
   postgres:
-    image: postgres:16
-    container_name: rentio-postgres
+    image: postgres:18.2
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-    ports:
-      - "5432:5432"
+      PGDATA: /var/lib/postgresql/18/docker
     volumes:
-      - rentio_pgdata:/var/lib/postgresql/data
+      - rentio_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks: [rentio_internal]
     restart: unless-stopped
 
   mqtt:
-    image: eclipse-mosquitto:2
-    container_name: rentio-mqtt
+    image: eclipse-mosquitto:2.0.18
+    command: ["mosquitto", "-c", "/mosquitto/config/mosquitto.conf"]
+    volumes:
+      - ../../mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - rentio_mqtt_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -p 1883 -t '$$SYS/broker/version' -C 1 -W 5 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+    networks: [rentio_internal]
+    restart: unless-stopped
+
+  core-api:
+    build:
+      context: ../../../rentio-core/api
+    env_file: [../../../.env]
+    environment:
+      PORT: ${CORE_API_PORT:-8080}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      MQTT_URL: ${MQTT_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
     ports:
-      - "${MQTT_PORT}:1883"
+      - "18081:8080"
+    networks: [rentio_internal, rentio_public]
+    restart: unless-stopped
+
+  core-ui:
+    build:
+      context: ../../../rentio-core/ui
+      args:
+        NEXT_PUBLIC_CORE_API_URL: ${CORE_API_URL:-http://localhost:18081}
+    environment:
+      PORT: ${CORE_UI_PORT:-3000}
+    depends_on:
+      core-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+    ports:
+      - "18080:3000"
+    networks: [rentio_public]
     restart: unless-stopped
 
   edge-agent:
     build:
       context: ../../../rentio-edge/agent
-    container_name: rentio-edge-agent
-    environment:
-      MQTT_URL: mqtt://mqtt:1883
-      RENTIO_TENANT: windome
-      RENTIO_BUILDING: casagiove-01
-      RENTIO_GATEWAY: gw-0001
+    env_file: [../../../.env]
     depends_on:
-      - mqtt
+      mqtt:
+        condition: service_healthy
+    volumes:
+      - rentio_edge_data:/data
+    environment:
+      MQTT_URL: ${MQTT_URL}
+    networks: [rentio_internal]
     restart: unless-stopped
+
+  postgres-debug:
+    image: alpine/socat:1.8.0.0
+    command: ["-d", "-d", "TCP-LISTEN:15432,fork,reuseaddr", "TCP:postgres:5432"]
+    depends_on: [postgres]
+    profiles: ["debug"]
+    ports:
+      - "15432:15432"
+    networks: [rentio_internal]
+
+  mqtt-debug:
+    image: alpine/socat:1.8.0.0
+    command: ["-d", "-d", "TCP-LISTEN:18883,fork,reuseaddr", "TCP:mqtt:1883"]
+    depends_on: [mqtt]
+    profiles: ["debug"]
+    ports:
+      - "18883:18883"
+    networks: [rentio_internal]
 
 volumes:
   rentio_pgdata:
+  rentio_mqtt_data:
+  rentio_edge_data:
+
+networks:
+  rentio_internal:
+  rentio_public:
