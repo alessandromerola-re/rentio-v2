@@ -81,3 +81,22 @@ If you see `no configuration file provided: not found`, you are running Compose 
 
 
 If login returns `401 Unauthorized` even with default credentials, check the root `.env` values for `ADMIN_EMAIL` and `ADMIN_PASSWORD`. In local Docker development, `core-api` reads that file through Compose and seed uses those values, so they can differ from the documented defaults.
+
+If `docker compose exec core-api sh -lc "echo $ADMIN_EMAIL && echo $ADMIN_PASSWORD"` prints empty lines in **PowerShell**, it is usually shell interpolation on the host side. Use single quotes so variables are expanded inside the container instead:
+
+```powershell
+docker compose exec core-api sh -lc 'echo "$ADMIN_EMAIL" && echo "$ADMIN_PASSWORD"'
+```
+
+You can also verify with:
+
+```powershell
+docker compose exec core-api sh -lc 'env | grep ^ADMIN_'
+```
+
+If values are still missing, confirm `../../../.env` exists and then recreate containers so env and seed are reapplied:
+
+```powershell
+docker compose down -v --remove-orphans
+docker compose up --build
+```
