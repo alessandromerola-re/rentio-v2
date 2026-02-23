@@ -18,6 +18,12 @@ jobs:
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
         run: npm install
+      - name: Prisma validate
+        if: matrix.app == 'rentio-core/api'
+        working-directory: ${{ matrix.app }}
+        env:
+          DATABASE_URL: postgresql://rentio:rentio_change_me@localhost:5432/rentio?schema=public
+        run: npx prisma validate
       - name: Lint
         working-directory: ${{ matrix.app }}
         run: npm run lint --if-present

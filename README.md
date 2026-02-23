@@ -10,6 +10,17 @@ cd infra/compose/dev
 docker compose up --build
 ```
 
+After `docker compose up --build`, `core-api` automatically waits for Postgres, applies Prisma migrations, and runs idempotent seed data (admin user + optional tenant/building when seed env is set).
+
+## Manual DB bootstrap commands
+
+From `infra/compose/dev`:
+
+```bash
+docker compose exec core-api npm run migrate:deploy
+docker compose exec core-api npm run seed
+```
+
 ## URLs (host)
 - UI: http://localhost:18080
 - API: http://localhost:18081
