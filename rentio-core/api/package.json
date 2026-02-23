@@ -19,7 +19,7 @@
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@fastify/jwt": "^9.0.1",
-    "@prisma/client": "^6.4.1",
+    "@prisma/client": "7.4.1",
     "bcryptjs": "^2.4.3",
     "fastify": "^5.2.1",
     "mqtt": "^5.10.4",
@@ -29,12 +29,9 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/node": "^22.13.5",
-    "prisma": "^6.4.1",
+    "prisma": "7.4.1",
     "tsx": "^4.19.3",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   }
 }

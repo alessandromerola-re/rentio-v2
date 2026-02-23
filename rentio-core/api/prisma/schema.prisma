@@ -23,6 +23,8 @@ model User {
   tenant       Tenant?  @relation(fields: [tenantId], references: [id])
   audits       AuditLog[]
   createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("users")
 }
 
 model Tenant {
@@ -36,6 +38,8 @@ model Tenant {
   states     DeviceState[]
   tokens     ProvisioningToken[]
   createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("tenants")
 }
 
 model Building {
@@ -51,6 +55,7 @@ model Building {
   createdAt  DateTime @default(now()) @map("created_at")
 
   @@unique([tenantId, slug])
+  @@map("buildings")
 }
 
 model Gateway {
@@ -68,6 +73,7 @@ model Gateway {
   states     DeviceState[]
 
   @@unique([tenantId, buildingId, gatewayId])
+  @@map("gateways")
 }
 
 model Event {
@@ -88,6 +94,7 @@ model Event {
 
   @@unique([gatewayDbId, eventId])
   @@index([tenantId, buildingId, channel])
+  @@map("events")
 }
 
 model DeviceState {
@@ -104,6 +111,7 @@ model DeviceState {
   gateway    Gateway  @relation(fields: [gatewayDbId], references: [id])
 
   @@unique([gatewayDbId, key])
+  @@map("device_states")
 }
 
 model ProvisioningToken {
@@ -116,6 +124,8 @@ model ProvisioningToken {
   usedAt     DateTime? @map("used_at")
   tenant     Tenant    @relation(fields: [tenantId], references: [id])
   building   Building  @relation(fields: [buildingId], references: [id])
+
+  @@map("provisioning_tokens")
 }
 
 model AuditLog {
@@ -125,4 +135,6 @@ model AuditLog {
   action      String
   meta        Json
   createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
 }

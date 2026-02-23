@@ -76,6 +76,23 @@ mosquitto_pub -h localhost -p 18883 -q 1 -r \
   -m '{"v":"1","id":"sys-1","ts":"2026-01-01T00:00:00.000Z","src":"edge-agent","tenant":"windome","building":"casagiove-01","gateway":"gw-0001","data":{"status":"online"}}'
 ```
 
+## DB table naming (normalized)
+
+Tables are now normalized to lowercase plural names (`gateways`, `events`, `users`, `tenants`, `buildings`, `device_states`, `provisioning_tokens`, `audit_logs`).
+Older SQL snippets that referenced PascalCase tables like `"Gateway"` / `"Event"` should be updated.
+
+Useful ops queries from `infra/compose/dev`:
+
+```bash
+docker compose exec postgres psql -U rentio -d rentio -c "select gateway_id,status,last_seen_at from gateways order by last_seen_at desc limit 5;"
+docker compose exec postgres psql -U rentio -d rentio -c "select channel,type,ts,topic from events order by ts desc limit 20;"
+```
+
+## Service health endpoints
+
+- API health: `GET /health`
+- UI health: `GET /api/health`
+
 ## Notes / next phase
 - Add reverse-proxy + TLS in front of API/UI.
 - Harden auth (refresh token, password policies, MFA).
