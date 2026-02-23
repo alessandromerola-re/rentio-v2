@@ -126,6 +126,9 @@ docker compose down -v --remove-orphans
 docker compose up --build
 ```
 
+If `docker compose logs core-api` shows repeated `No such file or directorycute 'bash'` errors on Windows, your checkout likely converted `docker-entrypoint.sh` to CRLF. Rebuild images after pulling latest fixes (the Dockerfile now normalizes line endings during build), or set shell files to LF in Git.
+
+
 If `docker compose ps` shows `core-api` as `unhealthy` and `\dt` returns no tables, inspect bootstrap logs first:
 
 ```powershell
