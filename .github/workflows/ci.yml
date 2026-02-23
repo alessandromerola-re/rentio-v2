@@ -1,0 +1,34 @@
+name: ci
+
+on:
+  pull_request:
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [rentio-core/api, rentio-core/ui, rentio-edge/agent]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm install
+      - name: Prisma validate
+        if: matrix.app == 'rentio-core/api'
+        working-directory: ${{ matrix.app }}
+        env:
+          DATABASE_URL: postgresql://rentio:rentio_change_me@localhost:5432/rentio?schema=public
+        run: npx prisma validate
+      - name: Lint
+        working-directory: ${{ matrix.app }}
+        run: npm run lint --if-present
+      - name: Test
+        working-directory: ${{ matrix.app }}
+        run: npm test --if-present
+      - name: Docker build
+        run: docker build ${{ matrix.app }}
