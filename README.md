@@ -18,6 +18,20 @@ docker compose up --build
 - email: `admin@rentio.local`
 - password: `admin12345`
 
+## Watch MQTT messages (Compose)
+
+From `infra/compose/dev`, you can inspect edge traffic directly from the broker container:
+
+```bash
+docker compose exec mqtt sh -lc "mosquitto_sub -h localhost -p 1883 -v -t 'rentio/v1/#'"
+```
+
+In another terminal publish a command and observe `ack/...` + `evt/...` responses:
+
+```bash
+docker compose exec mqtt sh -lc "mosquitto_pub -h localhost -p 1883 -q 1 -t 'rentio/v1/windome/casagiove-01/gw/gw-0001/cmd/device/ping' -m '{\"v\":\"1\",\"id\":\"cmd-1\",\"ts\":\"2026-01-01T00:00:00.000Z\",\"src\":\"core-api\",\"tenant\":\"windome\",\"building\":\"casagiove-01\",\"gateway\":\"gw-0001\",\"data\":{}}'"
+```
+
 ## MQTT Contract v1
 Base topic:
 `rentio/v1/{tenant}/{building}/gw/{gateway}/...`
