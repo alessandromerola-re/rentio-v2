@@ -1,103 +1,300 @@
-﻿const mqtt = require("mqtt");
-const crypto = require("crypto");
+'use strict';
 
-const MQTT_URL = process.env.MQTT_URL || "mqtt://localhost:1883";
-const MQTT_USERNAME = process.env.MQTT_USERNAME || "";
-const MQTT_PASSWORD = process.env.MQTT_PASSWORD || "";
+const mqtt = require('mqtt');
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const { resolveConfig, validateConfig, buildBaseTopic, topicFor } = require('./lib');
 
-const TENANT = process.env.RENTIO_TENANT || "windome";
-const BUILDING = process.env.RENTIO_BUILDING || "casagiove-01";
-const GATEWAY = process.env.RENTIO_GATEWAY || "gw-0001";
-
-const base = `rentio/v1/${TENANT}/${BUILDING}/gw/${GATEWAY}`;
-const sysStatusTopic = `${base}/sys/status`;
-
-function nowIso() {
-  return new Date().toISOString();
+const cfg = resolveConfig(process.env);
+const cfgErrors = validateConfig(cfg);
+if (cfgErrors.length > 0) {
+  console.error(`[edge-agent] configuration error: missing ${cfgErrors.join(', ')}`);
+  process.exit(1);
 }
 
-function envelope(src, data = {}, extra = {}) {
-  return {
-    v: 1,
+const baseTopic = buildBaseTopic(cfg);
+const statusTopic = topicFor(baseTopic, 'sys/status');
+const cmdSubscriptionTopic = topicFor(baseTopic, 'cmd/#');
+const outbox = [];
+let flushing = false;
+let shuttingDown = false;
+let flushBackoffMs = 1000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mkEnvelope(data, extra) {
+  const env = {
+    v: '1',
     id: crypto.randomUUID(),
-    ts: nowIso(),
-    src,
-    tenant: TENANT,
-    building: BUILDING,
-    gateway: GATEWAY,
-    ...extra,
-    data
+    ts: new Date().toISOString(),
+    src: 'edge-agent',
+    tenant: cfg.tenant,
+    building: cfg.building,
+    gateway: cfg.gateway,
+    data: data || {}
+  };
+
+  if (extra && typeof extra === 'object') {
+    Object.assign(env, extra);
+  }
+
+  return env;
+}
+
+function log(msg, details) {
+  const scope = `${cfg.tenant}/${cfg.building}/${cfg.gateway}`;
+  if (details) {
+    console.log(`[edge-agent][${scope}] ${msg}`, details);
+    return;
+  }
+  console.log(`[edge-agent][${scope}] ${msg}`);
+}
+
+function markAlive() {
+  try {
+    fs.mkdirSync(path.dirname(cfg.aliveFile), { recursive: true });
+    fs.writeFileSync(cfg.aliveFile, `${Date.now()}\n`, 'utf8');
+  } catch (err) {
+    console.error('[edge-agent] failed to update alive file', err.message);
+  }
+}
+
+function loadOutbox() {
+  try {
+    const txt = fs.readFileSync(cfg.queueFile, 'utf8');
+    for (const line of txt.split('\n')) {
+      if (!line.trim()) continue;
+      outbox.push(JSON.parse(line));
+    }
+    log(`loaded queue entries: ${outbox.length}`);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('[edge-agent] failed to load queue', err);
+    }
+  }
+}
+
+function persistOutbox() {
+  try {
+    fs.mkdirSync(path.dirname(cfg.queueFile), { recursive: true });
+    fs.writeFileSync(cfg.queueFile, outbox.map((entry) => JSON.stringify(entry)).join('\n'), 'utf8');
+  } catch (err) {
+    console.error('[edge-agent] failed to persist queue', err);
+  }
+}
+
+function enqueue(message, reason) {
+  outbox.push(message);
+  if (outbox.length > cfg.maxQueue) {
+    const dropped = outbox.length - cfg.maxQueue;
+    outbox.splice(0, dropped);
+    log(`queue full, dropped ${dropped} oldest message(s)`);
+  }
+  persistOutbox();
+  log(`queued message (${reason}) topic=${message.topic} queued=${outbox.length}`);
+}
+
+function makeQueued(topic, envelope, options = { qos: 1, retain: false }) {
+  return {
+    topic,
+    payload: JSON.stringify(envelope),
+    options
   };
 }
 
-const client = mqtt.connect(MQTT_URL, {
-  username: MQTT_USERNAME || undefined,
-  password: MQTT_PASSWORD || undefined,
-  clean: true,
-  keepalive: 30,
+function publishAsync(client, message) {
+  return new Promise((resolve, reject) => {
+    client.publish(message.topic, message.payload, message.options, (err) => {
+      if (err) return reject(err);
+      log(`published topic=${message.topic} qos=${message.options.qos} retain=${message.options.retain}`);
+      return resolve();
+    });
+  });
+}
+
+async function publishOrQueue(client, message) {
+  if (!client.connected) {
+    enqueue(message, 'client offline');
+    return;
+  }
+  try {
+    await publishAsync(client, message);
+  } catch (err) {
+    enqueue(message, `publish failed: ${err.message}`);
+  }
+}
+
+async function flushOutbox(client) {
+  if (flushing || !client.connected || outbox.length === 0) return;
+  flushing = true;
+
+  try {
+    while (client.connected && outbox.length > 0) {
+      const message = outbox[0];
+      try {
+        await publishAsync(client, message);
+        outbox.shift();
+        persistOutbox();
+        flushBackoffMs = 1000;
+      } catch (err) {
+        log(`flush paused topic=${message.topic}: ${err.message}; retry in ${flushBackoffMs}ms`);
+        await sleep(flushBackoffMs);
+        flushBackoffMs = Math.min(flushBackoffMs * 2, 30000);
+        break;
+      }
+    }
+  } finally {
+    flushing = false;
+  }
+}
+
+function parseCmdTopic(topic) {
+  const prefix = `${baseTopic}/cmd/`;
+  if (!topic.startsWith(prefix)) return null;
+  return topic.slice(prefix.length);
+}
+
+function ackTopicFor(cmdSuffix) {
+  return `${baseTopic}/ack/${cmdSuffix}`;
+}
+
+function evtTopicFor(cmdSuffix) {
+  return `${baseTopic}/evt/${cmdSuffix}`;
+}
+
+loadOutbox();
+markAlive();
+
+const willPayload = JSON.stringify(mkEnvelope({ status: 'offline' }));
+const client = mqtt.connect(cfg.mqttUrl, {
+  clientId: `edge-${cfg.gateway}-${crypto.randomUUID().slice(0, 8)}`,
+  username: cfg.username,
+  password: cfg.password,
   reconnectPeriod: 2000,
+  keepalive: 30,
   will: {
-    topic: sysStatusTopic,
-    payload: "offline",
+    topic: statusTopic,
+    payload: willPayload,
     qos: 1,
     retain: true
   }
 });
 
-client.on("connect", () => {
-  console.log(`[edge-agent] connected to ${MQTT_URL}`);
+log(`starting edge-agent mqtt=${cfg.mqttUrl} heartbeat=${cfg.heartbeatSeconds}s`);
 
-  // presence online (retained)
-  client.publish(sysStatusTopic, "online", { qos: 1, retain: true });
+client.on('connect', async () => {
+  log('connected to broker');
 
-  // boot event
-  const boot = envelope(`gw:${GATEWAY}`, { version: "0.1.0" });
-  client.publish(`${base}/evt/system/boot`, JSON.stringify(boot), { qos: 1 });
+  await publishOrQueue(client, makeQueued(statusTopic, mkEnvelope({ status: 'online' }), { qos: 1, retain: true }));
 
-  // subscribe commands
-  client.subscribe(`${base}/cmd/#`, { qos: 1 }, (err) => {
-    if (err) console.error("[edge-agent] subscribe error", err);
-    else console.log(`[edge-agent] subscribed: ${base}/cmd/#`);
-  });
-});
-
-client.on("message", (topic, payloadBuf) => {
-  const payloadStr = payloadBuf.toString("utf8");
-  console.log(`[edge-agent] cmd topic=${topic} payload=${payloadStr}`);
-
-  const cmdPrefix = `${base}/cmd/`;
-  if (!topic.startsWith(cmdPrefix)) return;
-
-  const route = topic.substring(cmdPrefix.length); // es: access/open
-  let msg;
-  try {
-    msg = JSON.parse(payloadStr);
-  } catch {
-    msg = null;
+  if (cfg.provisioningToken) {
+    await publishOrQueue(
+      client,
+      makeQueued(topicFor(baseTopic, 'evt/system/hello'), mkEnvelope({ token: cfg.provisioningToken, version: '0.3.0' }))
+    );
   }
 
-  // helper per ack
-  const ackTopic = `${base}/ack/${route}`;
-  const corr = msg?.id || null;
+  client.subscribe(cmdSubscriptionTopic, { qos: 1 }, (err) => {
+    if (err) {
+      console.error('[edge-agent] subscribe failed', err);
+      return;
+    }
+    log(`subscribed topic=${cmdSubscriptionTopic}`);
+  });
 
-  // access/open demo
-  if (route === "access/open") {
-    const device = msg?.data?.device || "unknown-device";
-    const unit = msg?.data?.unit || "unknown-unit";
+  await flushOutbox(client);
+});
 
-    const ack = envelope(`gw:${GATEWAY}`, { device, unit }, { corr, status: "ok" });
-    client.publish(ackTopic, JSON.stringify(ack), { qos: 1 });
+client.on('reconnect', () => log('reconnecting to broker...'));
+client.on('offline', () => log('mqtt client offline'));
+client.on('close', () => log('mqtt connection closed'));
+client.on('error', (err) => console.error('[edge-agent] mqtt error', err));
 
-    const evt = envelope(`gw:${GATEWAY}`, { device, unit, by: msg?.data?.requested_by || "unknown" });
-    client.publish(`${base}/evt/access/opened`, JSON.stringify(evt), { qos: 1 });
+client.on('message', async (topic, payloadBuf) => {
+  const cmdSuffix = parseCmdTopic(topic);
+  if (!cmdSuffix) return;
 
+  let cmd;
+  try {
+    cmd = JSON.parse(payloadBuf.toString('utf8'));
+  } catch (err) {
+    console.error('[edge-agent] invalid command payload', { topic, err: err.message });
+    await publishOrQueue(
+      client,
+      makeQueued(ackTopicFor(cmdSuffix), mkEnvelope({ status: 'error', reason: 'invalid-json' }))
+    );
     return;
   }
 
-  // default: unknown command
-  const errAck = envelope(`gw:${GATEWAY}`, { error: "Unknown command" }, { corr, status: "error", code: "NOT_IMPLEMENTED" });
-  client.publish(ackTopic, JSON.stringify(errAck), { qos: 1 });
+  const corr = cmd && cmd.id ? cmd.id : undefined;
+  log(`received command topic=${topic} id=${corr || 'n/a'}`);
+
+  await publishOrQueue(
+    client,
+    makeQueued(ackTopicFor(cmdSuffix), mkEnvelope({ status: 'ok', route: cmdSuffix }, corr ? { corr } : undefined))
+  );
+
+  await publishOrQueue(
+    client,
+    makeQueued(evtTopicFor(cmdSuffix), mkEnvelope({ action: 'command-executed', route: cmdSuffix }, corr ? { corr } : undefined))
+  );
+
+  await flushOutbox(client);
 });
 
-client.on("reconnect", () => console.log("[edge-agent] reconnecting..."));
-client.on("error", (err) => console.error("[edge-agent] error", err));
+setInterval(async () => {
+  markAlive();
+  await publishOrQueue(
+    client,
+    makeQueued(statusTopic, mkEnvelope({ status: 'online', heartbeat: true }), { qos: 1, retain: true })
+  );
+  await publishOrQueue(client, makeQueued(topicFor(baseTopic, 'evt/heartbeat'), mkEnvelope({ heartbeat: true })));
+  await flushOutbox(client);
+}, cfg.heartbeatSeconds * 1000);
+
+setInterval(async () => {
+  await flushOutbox(client);
+}, 3000);
+
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log(`received ${signal}, shutting down gracefully`);
+
+  try {
+    if (client.connected) {
+      await publishAsync(client, makeQueued(statusTopic, mkEnvelope({ status: 'offline', reason: signal }), { qos: 1, retain: true }));
+    }
+  } catch (err) {
+    console.error('[edge-agent] failed to publish offline status during shutdown', err.message);
+  }
+
+  client.end(false, () => {
+    log('mqtt client ended');
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    console.error('[edge-agent] forced shutdown timeout reached');
+    process.exit(1);
+  }, 5000).unref();
+}
+
+process.on('SIGTERM', () => {
+  shutdown('SIGTERM');
+});
+
+process.on('SIGINT', () => {
+  shutdown('SIGINT');
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[edge-agent] unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[edge-agent] uncaughtException', err);
+});
