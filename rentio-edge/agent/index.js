@@ -19,6 +19,11 @@ const cmdSubscriptionTopic = topicFor(baseTopic, 'cmd/#');
 const outbox = [];
 let flushing = false;
 let shuttingDown = false;
+let flushBackoffMs = 1000;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function mkEnvelope(data, extra) {
   const env = {
@@ -133,8 +138,11 @@ async function flushOutbox(client) {
         await publishAsync(client, message);
         outbox.shift();
         persistOutbox();
+        flushBackoffMs = 1000;
       } catch (err) {
-        log(`flush paused topic=${message.topic}: ${err.message}`);
+        log(`flush paused topic=${message.topic}: ${err.message}; retry in ${flushBackoffMs}ms`);
+        await sleep(flushBackoffMs);
+        flushBackoffMs = Math.min(flushBackoffMs * 2, 30000);
         break;
       }
     }
@@ -281,4 +289,12 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   shutdown('SIGINT');
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[edge-agent] unhandledRejection', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[edge-agent] uncaughtException', err);
 });
