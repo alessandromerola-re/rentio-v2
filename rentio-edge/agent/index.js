@@ -139,6 +139,9 @@ client.on('message', (topic, payloadBuf) => {
     publishOrBuffer(client, queuePublish(ackTopic, duplicateAck, { qos: 1, retain: false }));
     return;
   }
+  client.subscribe(`${base}/cmd/#`, { qos: 1 });
+  flushQueue(client);
+});
 
   if (cmdId) seenCmd.add(cmdId);
 
