@@ -78,3 +78,6 @@ If a previous build failed, do not run plain `docker compose up` immediately bec
 
 
 If you see `no configuration file provided: not found`, you are running Compose from the wrong directory. Run commands from `infra/compose/dev` where `docker-compose.yml` exists.
+
+
+If login returns `401 Unauthorized` even with default credentials, check the root `.env` values for `ADMIN_EMAIL` and `ADMIN_PASSWORD`. In local Docker development, `core-api` reads that file through Compose and seed uses those values, so they can differ from the documented defaults.
